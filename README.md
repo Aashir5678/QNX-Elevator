@@ -18,6 +18,7 @@ vision/blob.c/.h        YUV threshold + connected-component blob counting
 vision/vision_service.c capture.h glue and the publish loop
 vision/test_blob.c      host-side tests for the blob code
 sim/simulate.py         hardware-free simulation and aging_factor tuning
+tests/test_pipeline.py  FIFO pipeline integration tests (real FIFOs, no mocks)
 ```
 
 ## Start here: tuning without hardware
@@ -57,16 +58,19 @@ curve based on how much tail latency the demo should tolerate; `0.25` is the kne
 
 ## Running on the Pi
 
-Start `dispatcher` first — the other three need its FIFO readers open before they can publish.
+Getting code onto the board is **[DEPLOY.md](DEPLOY.md)** (`make deploy HOST=user@ip`, plus an
+SD-card fallback). Running and verifying it there is **[USAGE.md](USAGE.md)**.
+
+Short version — start `dispatcher` first, it creates the FIFOs the other three publish into:
 
 ```
 python3 src/dispatcher.py &
 python3 src/floor_input.py &
 python3 src/motor_control.py &      # refuses to run until calibrated, see below
-make vision && ./build/vision_service &
+./build/vision_service &
 ```
 
-FIFOs live in `/tmp/elevator` (override with `ELEVATOR_FIFO_DIR`).
+FIFOs live in `/tmp/elevator` (override with `ELEVATOR_FIFO_DIR`, identically for all four).
 
 ## Independent development
 
@@ -77,8 +81,20 @@ Each piece runs without the others:
 - **Vision pipeline**, no camera: `make vision-stub` builds `vision_service` against a
   synthetic frame source, exercising the FIFO publishing and occlusion suppression for real.
 - **Dispatch logic**, no hardware at all: `sim/simulate.py`.
-- **Motor and button logic**: `CarModel` and `CallBoard` are hardware-free classes; only
-  `main()` in each file touches `rpi_gpio`.
+- **Dispatcher FIFO pipeline**, no hardware: `make test-pipeline` runs the integration tests
+  in `tests/` against real named FIFOs in a temp directory.
+- **Motor and button logic**: only `main()` in each file touches `rpi_gpio`, so both modules
+  import anywhere. `CallBoard` is fully usable off-device; `CarModel.start_move()` needs the
+  `SETTLE_TIME_*` constants calibrated first.
+
+## Documentation
+
+| File | Covers |
+|---|---|
+| [TESTING.md](TESTING.md) | Full test procedure, layered by what needs hardware. Sole source of truth for the on-device unknowns and servo calibration. |
+| [DEPLOY.md](DEPLOY.md) | Getting code onto the board: scp/ssh over LAN, SD-card fallback. |
+| [USAGE.md](USAGE.md) | Running the four processes on hardware, and troubleshooting. |
+| [CHANGELOG.md](CHANGELOG.md) | Running record of every change. |
 
 ## Things that must be verified on-device
 
