@@ -13,13 +13,14 @@ BUILD   := build
 # Pinned explicitly so adding a target above `all` can never hijack bare `make`.
 .DEFAULT_GOAL := all
 
-.PHONY: all test test-pipeline test-all sim clean vision-stub vision deploy
+.PHONY: all test test-pipeline test-floor-input test-all sim clean \
+        vision-stub vision deploy
 
 # Default target builds and runs everything that works off-device.
-all: test test-pipeline vision-stub
+all: test test-pipeline test-floor-input vision-stub
 
 # Every off-device test in one go.
-test-all: test test-pipeline
+test-all: test test-pipeline test-floor-input
 
 $(BUILD):
 	@mkdir -p $(BUILD)
@@ -37,6 +38,11 @@ test: $(BUILD)/test_blob
 # temporary directory. No hardware, no camera.
 test-pipeline:
 	python3 tests/test_pipeline.py
+
+# floor_input software debounce, plus a static guard against reintroducing
+# rpi_gpio functions QNX does not provide.
+test-floor-input:
+	python3 tests/test_floor_input.py
 
 sim:
 	python3 sim/simulate.py --sweep

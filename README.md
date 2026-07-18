@@ -104,12 +104,11 @@ These are flagged in-file and were deliberately not guessed at:
    buffer ownership, and whether the webcam actually negotiates YUYV are all unconfirmed.
    `blob.c` assumes packed YUYV 4:2:2; if the camera hands back MJPEG or NV12 the unpacking
    in `sample_matches` must change. See the banner at the top of that file.
-2. **`rpi_gpio` PWM duty-cycle units** (`src/motor_control.py`) — RPi.GPIO-style APIs take a
-   percent, pigpio-style take microseconds, and they are not interchangeable. Getting this
-   wrong drives the servo into a hard stop. Also unconfirmed: the exact call that selects MS
-   mode.
-3. **`rpi_gpio` event detection** (`src/floor_input.py`) — whether `add_event_detect`
-   supports `bouncetime=`, and the `PUD_UP` constant naming.
+2. **`rpi_gpio` PWM MS mode** (`src/motor_control.py`) — the exact call that selects MS mode
+   is unconfirmed. Duty-cycle units are *resolved*: `ChangeDutyCycle()` is percentage-based
+   (0–100), and the existing conversion was already correct.
+3. **`rpi_gpio` event detection** (`src/floor_input.py`) — the `PUD_UP` constant naming.
+   `bouncetime=` is *resolved*: it does not exist on QNX, and debouncing is now manual.
 4. **Servo calibration** (`src/motor_control.py`) — `FLOOR_ANGLES` are `None` placeholders,
    not invented numbers. The process refuses to start until they are measured. Detach the
    drive linkage before jogging the servo.

@@ -27,18 +27,67 @@ BUTTONS = {
 }
 
 FLOORS = (1, 2, 3)
+# Window for the manual debounce below. Not a bouncetime= kwarg -- QNX has no
+# such parameter (see the CONFIRMED block).
 DEBOUNCE_MS = 200
 POLL_INTERVAL = 0.05
 # Republish unchanged state this often so a restarted dispatcher resyncs
 # without having to wait for the next button press.
 HEARTBEAT_INTERVAL = 2.0
 
-# VERIFY ON DEVICE: QNX's rpi_gpio is API-compatible with RPi.GPIO for the
-# calls used here, but confirm against the QNX docs before relying on:
-#   - GPIO.setmode(GPIO.BCM) constant naming
-#   - the pull_up_down= keyword and GPIO.PUD_UP constant
-#   - add_event_detect's bouncetime= support (if absent, do the debounce in
-#     the callback using the timestamps already tracked below)
+# CONFIRMED against QNX's official rpi_gpio API comparison table:
+# https://www.qnx.com/developers/docs/qnxeverywhere/com.qnx.doc.interfacing/topic/rpi/rpi_GPIO-apis.html
+#
+#   - add_event_detect(channel, edge, callback=fn) -- channel, edge and
+#     callback ONLY. There is no bouncetime= parameter, and QNX supports no
+#     bouncetime-based debouncing anywhere in its event handling. Passing it
+#     raises TypeError on-device. Debouncing must be done manually; see the
+#     Debouncer class below.
+#   - These are NOT available in QNX's rpi_gpio at all, do not introduce them:
+#     add_event_callback(), wait_for_edge(), event_detected(),
+#     remove_event_detect(), getmode(), gpio_function(), setwarnings().
+#
+# STILL UNVERIFIED -- confirm before relying on:
+#   - GPIO.setmode(GPIO.BCM) constant naming (setmode itself is supported;
+#     it is getmode that is absent)
+#   - the pull_up_down= keyword and the GPIO.PUD_UP constant
+
+
+class Debouncer:
+    """Per-channel software debounce, replacing QNX's absent bouncetime=.
+
+    Mechanical pushbuttons bounce for single-digit milliseconds on contact, so
+    one physical press can fire several edge callbacks. This is kept for that
+    reason, not speculatively -- the original code asked for a 200ms bouncetime
+    for the same purpose before it turned out QNX has no such parameter.
+
+    Note it is defence-in-depth rather than load-bearing: CallBoard.press() is
+    already idempotent, so a duplicate press on an already-active floor is a
+    no-op that cannot reset wait_start. Without debouncing the visible symptom
+    would be repeated log lines, plus a genuine risk of a bounce immediately
+    after a floor is served re-raising the call that was just cleared. With it,
+    one press produces one accepted trigger.
+
+    Hardware-free, so it is unit tested in tests/test_floor_input.py.
+    """
+
+    def __init__(self, window_ms=DEBOUNCE_MS):
+        self.window = window_ms / 1000.0
+        self._last_accepted = {}
+
+    def accept(self, channel, now):
+        """True if this trigger should be acted on, False if it is a bounce.
+
+        The window is measured from the last ACCEPTED trigger, and rejected
+        triggers deliberately do not extend it -- otherwise a continuously
+        chattering line would suppress itself forever and the button would go
+        permanently dead.
+        """
+        last = self._last_accepted.get(channel)
+        if last is not None and (now - last) < self.window:
+            return False
+        self._last_accepted[channel] = now
+        return True
 
 
 class CallBoard:
@@ -82,6 +131,7 @@ def main():
     calls_out = ipc.FifoWriter(ipc.FIFO_CALLS)
     served_in = ipc.FifoReader(ipc.FIFO_SERVED)
     board = CallBoard()
+    debouncer = Debouncer(DEBOUNCE_MS)
 
     GPIO.setmode(GPIO.BCM)
     for name, cfg in BUTTONS.items():
@@ -89,16 +139,20 @@ def main():
 
         def make_cb(floor, name):
             def cb(channel):
-                board.press(floor, time.time())
+                now = time.time()
+                if not debouncer.accept(channel, now):
+                    return
+                board.press(floor, now)
                 print(f"[floor_input] press {name} -> floor {floor}", flush=True)
 
             return cb
 
+        # channel, edge, callback ONLY -- no bouncetime=, see the CONFIRMED
+        # block at the top of this file. Debouncing is handled in the callback.
         GPIO.add_event_detect(
             cfg["pin"],
             GPIO.FALLING,
             callback=make_cb(cfg["floor"], name),
-            bouncetime=DEBOUNCE_MS,
         )
 
     print("[floor_input] up, watching 4 buttons", flush=True)

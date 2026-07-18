@@ -37,27 +37,32 @@ SETTLE_TIME_MIN = None  # TODO: minimum settle even for a zero-distance move
 CARPOS_INTERVAL = 0.25
 POLL_INTERVAL = 0.05
 
-# VERIFY ON DEVICE / AGAINST QNX DOCS -- do not trust the mapping below
-# without checking it:
+# CONFIRMED against QNX's official rpi_gpio API comparison table:
+# https://www.qnx.com/developers/docs/qnxeverywhere/com.qnx.doc.interfacing/topic/rpi/rpi_GPIO-apis.html
 #
-# The angle -> duty-cycle conversion depends on how QNX's rpi_gpio PWM
-# expresses duty cycle in MS mode. RPi.GPIO-style ChangeDutyCycle() takes a
-# PERCENT (0-100), while pigpio-style APIs take a pulse WIDTH in microseconds.
-# These are not interchangeable and getting it wrong will drive the servo to a
-# hard stop. Confirm which one QNX's module implements, and confirm the exact
-# call used to select MS mode, before energising the servo.
+#   - ChangeDutyCycle() is PERCENTAGE-based (0-100) in QNX's rpi_gpio, the
+#     same as Linux RPi.GPIO -- NOT a pulse width in microseconds. The
+#     angle_to_duty_percent() conversion below is therefore correct as
+#     written: it converts a pulse width to a percentage of the frame period
+#     before handing it to ChangeDutyCycle(). Do not "simplify" it by passing
+#     pulse_us directly; that would command a ~1000% duty cycle.
 #
-# The conversion below assumes PERCENT. If QNX's module wants microseconds,
-# use pulse_us directly and delete the percent conversion.
+# STILL UNVERIFIED -- confirm before energising the servo:
+#   - the exact call that selects MS mode (QNX documents MS mode for servos,
+#     but the setter name and signature are not confirmed)
+#   - SERVO_MIN/MAX_PULSE_US below are typical hobby-servo values, not
+#     measured for this specific servo
 SERVO_MIN_PULSE_US = 1000  # typical 0deg; verify for your specific servo
 SERVO_MAX_PULSE_US = 2000  # typical 180deg; verify for your specific servo
 SERVO_MAX_ANGLE = 180.0
 
 
 def angle_to_duty_percent(angle, freq_hz=PWM_FREQUENCY_HZ):
-    """Convert a servo angle to a duty-cycle percentage.
+    """Convert a servo angle to a duty-cycle percentage for ChangeDutyCycle().
 
-    See the VERIFY block above -- this assumes a percent-based API.
+    Percentage output is confirmed correct for QNX's rpi_gpio -- see the block
+    above. At the default 50Hz the frame is 20000us, so a 1000-2000us servo
+    pulse maps to 5-10% duty.
     """
     span = SERVO_MAX_PULSE_US - SERVO_MIN_PULSE_US
     pulse_us = SERVO_MIN_PULSE_US + (angle / SERVO_MAX_ANGLE) * span

@@ -11,6 +11,31 @@ relevant doc (TESTING.md, DEPLOY.md, USAGE.md) or in a code comment.
 
 ## Unreleased
 
+### 2026-07-18 — rpi_gpio API corrections (confirmed against QNX docs)
+
+Source for all of the below: QNX's official rpi_gpio API comparison table —
+<https://www.qnx.com/developers/docs/qnxeverywhere/com.qnx.doc.interfacing/topic/rpi/rpi_GPIO-apis.html>
+
+- **Fixed `TypeError` on `add_event_detect`** (`src/floor_input.py`) — removed the
+  `bouncetime=` kwarg, which crashed on-device. QNX supports no bouncetime-based debouncing
+  anywhere; the supported signature is `(channel, edge, callback=fn)` only.
+- **Added manual software debounce** (`src/floor_input.py`) — new `Debouncer` class gates the
+  edge callback on a per-channel last-accepted timestamp, reusing `DEBOUNCE_MS` as the window.
+  Rejected triggers deliberately do not extend the window, or chatter would leave the button
+  permanently dead.
+- **Added debounce and API-conformance tests** (`tests/test_floor_input.py`, `Makefile`) —
+  covers the debounce logic against the real `CallBoard`, plus an AST-based guard that fails
+  if `bouncetime=` or any QNX-unavailable rpi_gpio function is reintroduced. Added
+  `make test-floor-input`; wired into `all` and `test-all`.
+- **Confirmed `ChangeDutyCycle()` is percentage-based** (`src/motor_control.py`) — comment
+  moved from unverified to confirmed. **No code change needed**: `angle_to_duty_percent()`
+  already converted to a percentage (5–10% for 1–2ms pulses at 50Hz), so the existing
+  assumption was correct.
+- **Audited for QNX-unavailable rpi_gpio functions** — `add_event_callback`, `wait_for_edge`,
+  `event_detected`, `remove_event_detect`, `getmode`, `gpio_function`, `setwarnings`: no call
+  sites anywhere in the repo. No fixes required; now guarded by test.
+- **MS-mode selection and `capture.h` remain unverified** — unchanged by this work.
+
 ### 2026-07-18 — Deployment, usage, and change documentation
 
 - **Added `make deploy HOST=user@ip`** (`Makefile`) — scp's runtime files only (`src/*.py`

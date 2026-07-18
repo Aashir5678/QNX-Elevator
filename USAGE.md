@@ -165,12 +165,14 @@ plumbing are fine, which narrows any remaining fault to the board.
 | Head counts stuck for one floor | that band is being suppressed as the car's position; check `motor_control` is publishing `carpos` |
 | Processes running but no interaction | started out of order, or mismatched `ELEVATOR_FIFO_DIR` |
 | Erratic/missing messages | something is `cat`-ing a FIFO and stealing messages (see above) |
-| Servo jitters or hits a hard stop | PWM duty-cycle units — TESTING.md Layer 3. **Stop immediately** |
+| Servo jitters or hits a hard stop | MS-mode selection or miscalibrated angles — TESTING.md Layer 3. **Stop immediately** |
+| One button press registers several times | debounce window too short — raise `DEBOUNCE_MS` in `floor_input.py` |
 
 **Hardware-specific unknowns are documented once, in [TESTING.md](TESTING.md) Layer 3** —
-the unverified `capture.h` calls and pixel-format assumption, the `rpi_gpio` PWM duty-cycle
-units and MS-mode selection, `add_event_detect` bouncetime support, and the servo calibration
-procedure. They are not repeated here; that file is the single source of truth for them.
+the unverified `capture.h` calls and pixel-format assumption, `rpi_gpio` PWM MS-mode
+selection, and the servo calibration procedure. They are not repeated here; that file is the
+single source of truth for them, and it also records which items have since been *resolved*
+(PWM duty-cycle units, and `add_event_detect`'s lack of `bouncetime=`).
 
 The most likely first-run failure is the **pixel format**: `blob.c` assumes packed YUYV 4:2:2,
 and if the webcam negotiates MJPEG or NV12 instead, head counts will be garbage while every

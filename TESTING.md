@@ -181,7 +181,12 @@ modules import cleanly anywhere:
 
 ### Unverified API details — do not trust without checking the QNX docs
 
-These were deliberately not guessed at. They remain open.
+These were deliberately not guessed at. Items marked **RESOLVED** have since been confirmed
+against QNX's official rpi_gpio API comparison table and are recorded here so they are not
+re-investigated; everything else remains open.
+
+Source for the resolved rpi_gpio items:
+<https://www.qnx.com/developers/docs/qnxeverywhere/com.qnx.doc.interfacing/topic/rpi/rpi_GPIO-apis.html>
 
 **`capture.h` usage in `vision/vision_service.c`.** None of the following is confirmed:
 
@@ -204,10 +209,8 @@ without touching the algorithm.
 
 **`rpi_gpio` PWM in `src/motor_control.py`:**
 
-- **Duty-cycle units.** RPi.GPIO-style `ChangeDutyCycle()` takes a **percent** (0–100);
-  pigpio-style APIs take a pulse **width in microseconds**. These are not interchangeable and
-  guessing wrong drives the servo into a hard stop. `angle_to_duty_percent()` assumes percent;
-  if QNX's module wants microseconds, use `pulse_us` directly and delete the conversion.
+- ~~Duty-cycle units.~~ **RESOLVED** — `ChangeDutyCycle()` is percentage-based (0–100) in
+  QNX's rpi_gpio, same as Linux RPi.GPIO. `angle_to_duty_percent()` was already correct.
 - The exact call that selects **MS mode**. QNX documents MS mode for servos, but the setter
   name and signature are unconfirmed — the line is present but commented out.
 - `SERVO_MIN_PULSE_US` / `SERVO_MAX_PULSE_US` (1000/2000) are typical hobby-servo values, not
@@ -216,8 +219,14 @@ without touching the algorithm.
 
 **`rpi_gpio` event detection in `src/floor_input.py`:**
 
-- Whether `add_event_detect` supports the `bouncetime=` keyword. If not, debounce in the
-  callback using the timestamps `CallBoard` already tracks.
+- ~~Whether `add_event_detect` supports `bouncetime=`.~~ **RESOLVED — it does not.** The
+  supported signature is `(channel, edge, callback=fn)` only, and QNX has no bouncetime-based
+  debouncing anywhere. Passing it raises `TypeError` on-device. Debouncing is now done
+  manually by the `Debouncer` class, covered by `make test-floor-input`.
+- **These rpi_gpio functions do not exist on QNX** and must not be introduced:
+  `add_event_callback()`, `wait_for_edge()`, `event_detected()`, `remove_event_detect()`,
+  `getmode()`, `gpio_function()`, `setwarnings()`. Note `setmode()` *is* supported; it is
+  `getmode()` that is absent. `tests/test_floor_input.py` fails the build if any appear.
 - `GPIO.setmode(GPIO.BCM)` constant naming.
 - The `pull_up_down=` keyword and the `GPIO.PUD_UP` constant.
 - The BCM pin numbers in `BUTTONS` (17, 27, 22, 23) are placeholders for your wiring. Buttons
