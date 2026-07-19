@@ -13,14 +13,19 @@ BUILD   := build
 # Pinned explicitly so adding a target above `all` can never hijack bare `make`.
 .DEFAULT_GOAL := all
 
-.PHONY: all test test-pipeline test-floor-input test-all sim clean \
-        vision-stub vision deploy
+.PHONY: all test test-pipeline test-floor-input test-mock test-all sim clean \
+        vision-stub vision vision-sensor deploy mock
 
 # Default target builds and runs everything that works off-device.
-all: test test-pipeline test-floor-input vision-stub
+all: test test-pipeline test-floor-input test-mock vision-stub
 
 # Every off-device test in one go.
-test-all: test test-pipeline test-floor-input
+test-all: test test-pipeline test-floor-input test-mock
+
+# THE DEMO FALLBACK. No camera, no vision build, no capture backend.
+# Start dispatcher first, then this.
+mock:
+	python3 tools/mock_vision.py --interactive
 
 $(BUILD):
 	@mkdir -p $(BUILD)
@@ -44,20 +49,34 @@ test-pipeline:
 test-floor-input:
 	python3 tests/test_floor_input.py
 
+# Guards the mock demo fallback's wire format against the real Dispatcher.
+test-mock:
+	python3 tests/test_mock_vision.py
+
 sim:
 	python3 sim/simulate.py --sweep
 
 # --- builds ---------------------------------------------------------------
 
-# Full pipeline minus the camera: synthetic frames, real FIFOs.
+# Three capture backends -- see PIVOT.md for current status.
+
+# WORKS TODAY. Full pipeline minus the camera: synthetic frames, real FIFOs.
 vision-stub: $(BUILD)
 	$(CC) $(CFLAGS) -DVISION_STUB_CAPTURE -o $(BUILD)/vision_stub \
 		vision/vision_service.c vision/blob.c
 
-# ON-DEVICE ONLY. Needs QNX SDP 8.0.0 headers and libcapture; the capture.h
-# calls in vision_service.c are unverified -- see the banner in that file.
+# CURRENT TARGET, UNVERIFIED. QNX Sensor Framework / Camera Module 3.
+# Will NOT compile until the real API is checked against the on-board headers:
+# every call in that backend is a hypothesis. The -lsensor library name is
+# itself a guess. On-device only.
+vision-sensor: $(BUILD)
+	$(CC) $(CFLAGS) -DVISION_SENSOR_FRAMEWORK -o $(BUILD)/vision_service \
+		vision/vision_service.c vision/blob.c -lsensor
+
+# DEAD ON qnxpi12 -- capture.h and libcapture are not installed on this board
+# (verified with find). Kept in case the package is added later.
 vision: $(BUILD)
-	$(CC) $(CFLAGS) -o $(BUILD)/vision_service \
+	$(CC) $(CFLAGS) -DVISION_CAPTURE_H -o $(BUILD)/vision_service \
 		vision/vision_service.c vision/blob.c -lcapture
 
 # --- deployment (see DEPLOY.md) -------------------------------------------

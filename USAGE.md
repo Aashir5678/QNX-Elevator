@@ -17,7 +17,8 @@ cd elevator
 python3 src/dispatcher.py &      # FIRST — creates all six FIFOs
 python3 src/floor_input.py &     # needs root/GPIO
 python3 src/motor_control.py &   # needs root/GPIO; refuses to run uncalibrated
-./build/vision_service &
+./build/vision_service &      # OR the mock, see PIVOT.md -- no camera needed:
+                              #   python3 tools/mock_vision.py --interactive
 ```
 
 `dispatcher` calls `ipc.ensure_fifos()` before opening anything and owns creation of all six
@@ -169,7 +170,7 @@ plumbing are fine, which narrows any remaining fault to the board.
 | One button press registers several times | debounce window too short — raise `DEBOUNCE_MS` in `floor_input.py` |
 
 **Hardware-specific unknowns are documented once, in [TESTING.md](TESTING.md) Layer 3** —
-the unverified `capture.h` calls and pixel-format assumption, `rpi_gpio` PWM MS-mode
+the pixel-format assumption, `rpi_gpio` PWM MS-mode
 selection, and the servo calibration procedure. They are not repeated here; that file is the
 single source of truth for them, and it also records which items have since been *resolved*
 (PWM duty-cycle units, and `add_event_detect`'s lack of `bouncetime=`).

@@ -11,6 +11,30 @@ relevant doc (TESTING.md, DEPLOY.md, USAGE.md) or in a code comment.
 
 ## Unreleased
 
+### 2026-07-18 — Camera pivot: capture.h dead, mock is the demo path
+
+- **Added `tools/mock_vision.py`** — publishes head counts to the heads FIFO in
+  `vision_service`'s exact wire format. Static, scripted, or interactive. Depends only on
+  stdlib and `src/ipc.py`; no camera, no vision build, no capture backend. **This is the
+  guaranteed demo path.** Added `make mock`.
+- **Added `tests/test_mock_vision.py`** (`Makefile`) — feeds mock output through the real
+  `Dispatcher` so wire-format drift fails at test time, not at the demo. Includes the
+  suppressed-floor-is-omitted rule. Added `make test-mock`.
+- **Three selectable capture backends** (`vision/vision_service.c`, `Makefile`) —
+  `VISION_STUB_CAPTURE` (works), `VISION_SENSOR_FRAMEWORK` (new, unverified),
+  `VISION_CAPTURE_H` (dead but kept, not deleted). Build fails with `#error` if not exactly
+  one is selected. `blob.c` and the FIFO-publishing logic untouched.
+- **Added Sensor Framework backend** (`vision/vision_service.c`) — targets Camera Module 3
+  (IMX708). Every call marked `UNVERIFIED`; modelled on the external-camera
+  `start_preview`/`get_preview_frame` pattern as a hypothesis. Never compiled against real
+  headers. `make vision-sensor`.
+- **Added `PIVOT.md`** — why `capture.h` is dead (package absent, verified via `find`, not a
+  code bug), Sensor Framework status, and the explicit mock fallback.
+- **Docs point at PIVOT.md for vision status** (`TESTING.md`, `README.md`, `USAGE.md`) —
+  removed stale text describing `capture.h` as the active plan.
+- **Noted `vision_service.c` ignores `ELEVATOR_FIFO_DIR`** (`TESTING.md`, `README.md`) — it
+  hardcodes `/tmp/elevator` unlike the Python processes. Documented, not changed.
+
 ### 2026-07-18 — rpi_gpio API corrections (confirmed against QNX docs)
 
 Source for all of the below: QNX's official rpi_gpio API comparison table —

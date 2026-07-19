@@ -15,10 +15,11 @@ src/dispatcher.py       the decision loop and its state machine
 src/floor_input.py      4 hall-call buttons via rpi_gpio
 src/motor_control.py    servo via rpi_gpio PWM, publishes car position
 vision/blob.c/.h        YUV threshold + connected-component blob counting
-vision/vision_service.c capture.h glue and the publish loop
+vision/vision_service.c capture backends (stub/sensor/capture.h) + publish loop
 vision/test_blob.c      host-side tests for the blob code
 sim/simulate.py         hardware-free simulation and aging_factor tuning
 tests/test_pipeline.py  FIFO pipeline integration tests (real FIFOs, no mocks)
+tools/mock_vision.py    mock head-count publisher -- the guaranteed demo path
 ```
 
 ## Start here: tuning without hardware
@@ -67,10 +68,15 @@ Short version — start `dispatcher` first, it creates the FIFOs the other three
 python3 src/dispatcher.py &
 python3 src/floor_input.py &
 python3 src/motor_control.py &      # refuses to run until calibrated, see below
-./build/vision_service &
+python3 tools/mock_vision.py --interactive   # head counts, no camera needed
 ```
 
-FIFOs live in `/tmp/elevator` (override with `ELEVATOR_FIFO_DIR`, identically for all four).
+The fourth process is the head-count source. **Use the mock** — the camera path is not
+working, see [PIVOT.md](PIVOT.md). Swap in `./build/vision_service &` only once a capture
+backend is verified.
+
+FIFOs live in `/tmp/elevator` (override with `ELEVATOR_FIFO_DIR`, identically for all four —
+note `vision_service.c` hardcodes the default and ignores that variable).
 
 ## Independent development
 
@@ -94,16 +100,18 @@ Each piece runs without the others:
 | [TESTING.md](TESTING.md) | Full test procedure, layered by what needs hardware. Sole source of truth for the on-device unknowns and servo calibration. |
 | [DEPLOY.md](DEPLOY.md) | Getting code onto the board: scp/ssh over LAN, SD-card fallback. |
 | [USAGE.md](USAGE.md) | Running the four processes on hardware, and troubleshooting. |
+| [PIVOT.md](PIVOT.md) | **Current vision-pipeline status** — what works, what's dead, what's the fallback. |
 | [CHANGELOG.md](CHANGELOG.md) | Running record of every change. |
 
 ## Things that must be verified on-device
 
 These are flagged in-file and were deliberately not guessed at:
 
-1. **`capture.h` usage** (`vision/vision_service.c`) — function names, property constants,
-   buffer ownership, and whether the webcam actually negotiates YUYV are all unconfirmed.
-   `blob.c` assumes packed YUYV 4:2:2; if the camera hands back MJPEG or NV12 the unpacking
-   in `sample_matches` must change. See the banner at the top of that file.
+1. **Camera capture** (`vision/vision_service.c`) — `capture.h` is confirmed **not installed**
+   on this board and that path is dead; a Sensor Framework backend for the Camera Module 3 is
+   attempted but unverified. **The demo runs on mock input.** See [PIVOT.md](PIVOT.md).
+   `blob.c` assumes packed YUYV 4:2:2; if the sensor delivers another format the unpacking in
+   `sample_matches` must change.
 2. **`rpi_gpio` PWM MS mode** (`src/motor_control.py`) — the exact call that selects MS mode
    is unconfirmed. Duty-cycle units are *resolved*: `ChangeDutyCycle()` is percentage-based
    (0–100), and the existing conversion was already correct.

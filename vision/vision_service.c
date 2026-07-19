@@ -1,6 +1,6 @@
-/* vision_service.c -- webcam -> per-floor head counts.
+/* vision_service.c -- camera -> per-floor head counts.
  *
- * Polls the UVC camera roughly once a second, splits each frame into three
+ * Polls the camera roughly once a second, splits each frame into three
  * horizontal ROI bands (top=floor 3, bottom=floor 1), counts target-coloured
  * blobs in each, and publishes the counts to a FIFO.
  *
@@ -8,28 +8,36 @@
  * the car itself is not miscounted as a head.
  *
  * =====================================================================
- * !! THE capture.h CALLS IN THIS FILE ARE UNVERIFIED !!
+ * THREE SELECTABLE CAPTURE BACKENDS -- see PIVOT.md for current status.
  *
- * The blob detection (blob.c) is tested and correct -- see test_blob.
- * The camera glue below is written from the general shape of the QNX Video
- * Capture API and MUST be checked against the SDP 8.0.0 documentation on
- * qnxpi12 before it is trusted. In particular these are NOT confirmed:
+ * Everything below the capture layer (blob.c, carpos_poll, publish, main)
+ * is tested and correct and is NOT backend-specific. Only frame acquisition
+ * differs. Select exactly one at build time:
  *
- *   - exact spelling/existence of capture_create_context, capture_set_property_i32,
- *     capture_create_buffers, capture_get_frame, capture_release_frame,
- *     capture_destroy_context
- *   - the property constants (CAPTURE_PROPERTY_*) and whether SRC_ vs DST_
- *     variants are the right ones for a UVC source
- *   - buffer ownership: whether capture_get_frame returns a borrowed pointer
- *     that must be released before the next call, and whether the returned
- *     index is into the buffer array we supplied
- *   - whether YUYV (CAPTURE_PROPERTY_DST_FORMAT / CAPTURE_FRAMETYPE_YUY2) is
- *     what this particular webcam negotiates -- if it hands back MJPEG or
- *     NV12 instead, blob.c's YUYV assumption is wrong and the sample_matches
- *     unpacking must change
+ *   -DVISION_STUB_CAPTURE       (make vision-stub)   WORKS TODAY.
+ *       Synthetic frames, no camera. Exercises the entire pipeline.
  *
- * Build with -DVISION_STUB_CAPTURE to compile and exercise everything except
- * the camera, using synthetic frames. That path works today.
+ *   -DVISION_SENSOR_FRAMEWORK   (make vision-sensor) UNVERIFIED, CURRENT TARGET.
+ *       QNX Sensor Framework, for the Raspberry Pi Camera Module 3 (IMX708)
+ *       that is physically on this board. Every call in this backend is
+ *       marked UNVERIFIED -- the signatures are a HYPOTHESIS modelled on the
+ *       external-camera example's start_preview/get_preview_frame/stop_preview
+ *       pattern, NOT a confirmed API. Has never been compiled against real
+ *       headers. Expect the function names to be wrong.
+ *
+ *   -DVISION_CAPTURE_H          (make vision)        DEAD ON THIS BOARD.
+ *       The original Video Capture framework path, kept rather than deleted
+ *       in case the package is ever installed. `find / -iname "capture.h"`
+ *       and `find / -iname "libcapture*"` are both EMPTY on qnxpi12, so this
+ *       cannot build here. Not a code bug -- the package is simply absent.
+ *
+ * If none is defined the build fails with an #error rather than silently
+ * picking one.
+ *
+ * PIXEL FORMAT applies to every backend: blob.c assumes packed YUYV 4:2:2
+ * (Y0 U Y1 V). If the sensor delivers anything else, the unpacking in
+ * blob.c's sample_matches() must change. blob.c is tested and correct --
+ * do not edit it speculatively.
  * =====================================================================
  */
 
@@ -44,8 +52,20 @@
 #include <time.h>
 #include <unistd.h>
 
-#ifndef VISION_STUB_CAPTURE
+/* Exactly one backend must be selected. */
+#if defined(VISION_STUB_CAPTURE) + defined(VISION_SENSOR_FRAMEWORK) \
+  + defined(VISION_CAPTURE_H) != 1
+#error "define exactly one of VISION_STUB_CAPTURE, VISION_SENSOR_FRAMEWORK, VISION_CAPTURE_H"
+#endif
+
+#ifdef VISION_CAPTURE_H
 #include <vcapture/capture.h>
+#endif
+
+#ifdef VISION_SENSOR_FRAMEWORK
+/* UNVERIFIED: header name and location are a guess. On the board, locate the
+ * real one with:  find / -iname "*sensor*.h"  */
+#include <sensor/sensor_api.h>
 #endif
 
 #define FIFO_HEADS  "/tmp/elevator/heads"
@@ -141,7 +161,127 @@ static const uint8_t *cap_frame(cap_ctx *c)
 static void cap_release(cap_ctx *c) { (void)c; }
 static void cap_close(cap_ctx *c) { free(c->buf); }
 
-#else
+#elif defined(VISION_SENSOR_FRAMEWORK)
+/* ===================================================================
+ * QNX Sensor Framework backend -- Raspberry Pi Camera Module 3 (IMX708).
+ *
+ * !! EVERY CALL IN THIS BACKEND IS UNVERIFIED !!
+ *
+ * This is modelled on the external-camera example's start_preview() /
+ * get_preview_frame() / stop_preview() pattern. That pattern is a STARTING
+ * HYPOTHESIS, not a confirmed API. This code has never been compiled against
+ * real Sensor Framework headers and the function names are quite likely
+ * wrong. Check each UNVERIFIED marker against the on-board headers before
+ * assuming anything here is right. See PIVOT.md.
+ *
+ * Before touching this at all, confirm the camera works standalone:
+ *     camera_example3_viewfinder
+ * If that does not produce a live image, nothing below matters.
+ * =================================================================== */
+typedef struct {
+    /* UNVERIFIED: handle type and name. The example uses a camera/sensor
+     * handle of some description; the real type must be taken from the
+     * on-board headers. */
+    sensor_handle_t handle;
+    const uint8_t  *frame;   /* borrowed pointer to the current frame, or NULL */
+    int             started;
+} cap_ctx;
+
+static int cap_open(cap_ctx *c)
+{
+    memset(c, 0, sizeof(*c));
+
+    /* UNVERIFIED: does the Sensor Framework need an explicit connect/open
+     * before preview starts, and does it take a device name, an index, or a
+     * unit enum? Guessing a name-based open. */
+    c->handle = sensor_open("/dev/sensor/camera0");
+    if (c->handle == NULL) {
+        fprintf(stderr, "vision(sensor): sensor_open failed -- is the `sensor` "
+                        "service running? Check PIVOT.md.\n");
+        return -1;
+    }
+
+    /* UNVERIFIED: whether format/resolution are negotiated here, and whether
+     * the sensor can be asked for YUYV at all. blob.c requires packed YUYV
+     * 4:2:2; IMX708 may only offer RAW or NV12, in which case a conversion
+     * step is needed here (NOT a change to blob.c). */
+    if (sensor_set_format(c->handle, SENSOR_FORMAT_YUY2,
+                          FRAME_WIDTH, FRAME_HEIGHT) != 0) {
+        fprintf(stderr, "vision(sensor): sensor_set_format failed -- the "
+                        "sensor may not offer YUYV; see PIVOT.md\n");
+        sensor_close(c->handle);
+        return -1;
+    }
+
+    /* UNVERIFIED: start_preview signature, and whether preview is even the
+     * right mode for pulling raw buffers rather than rendering to a display. */
+    if (start_preview(c->handle) != 0) {
+        fprintf(stderr, "vision(sensor): start_preview failed\n");
+        sensor_close(c->handle);
+        return -1;
+    }
+    c->started = 1;
+    return 0;
+}
+
+static const uint8_t *cap_frame(cap_ctx *c)
+{
+    /* UNVERIFIED: return convention. Does it return a borrowed pointer, fill
+     * a caller-supplied buffer, or return an index into a ring? Does it block
+     * until a frame is ready, and is there a timeout argument? Assuming a
+     * borrowed pointer plus an out-param for size, which must be released
+     * before the next call. */
+    size_t len = 0;
+    const uint8_t *buf = get_preview_frame(c->handle, &len);
+    if (buf == NULL) return NULL;
+
+    /* Guard against a short buffer regardless of what the API turns out to
+     * do -- blob.c would read out of bounds otherwise. This check is correct
+     * even if everything above is wrong. */
+    if (len < (size_t)FRAME_WIDTH * 2 * FRAME_HEIGHT) {
+        fprintf(stderr, "vision(sensor): frame too small (%zu bytes, need %zu) "
+                        "-- wrong pixel format? see PIVOT.md\n",
+                len, (size_t)FRAME_WIDTH * 2 * FRAME_HEIGHT);
+        return NULL;
+    }
+    c->frame = buf;
+    return buf;
+}
+
+static void cap_release(cap_ctx *c)
+{
+    /* UNVERIFIED: whether a per-frame release exists at all. If frames are
+     * copied rather than borrowed this is a no-op and can be deleted. */
+    if (c->frame) {
+        release_preview_frame(c->handle, c->frame);
+        c->frame = NULL;
+    }
+}
+
+static void cap_close(cap_ctx *c)
+{
+    /* UNVERIFIED: teardown order and function names. */
+    if (c->started) {
+        stop_preview(c->handle);
+        c->started = 0;
+    }
+    if (c->handle) {
+        sensor_close(c->handle);
+        c->handle = NULL;
+    }
+}
+
+#else /* VISION_CAPTURE_H */
+/* ===================================================================
+ * Original Video Capture framework backend.
+ *
+ * DEAD ON qnxpi12 -- neither capture.h nor libcapture is installed
+ * (`find / -iname "capture.h"` and `find / -iname "libcapture*"` both empty).
+ * Kept rather than deleted in case the package is installed later.
+ *
+ * These calls were never confirmed either -- they remain as originally
+ * written, unverified against real headers.
+ * =================================================================== */
 typedef struct {
     capture_context_t ctx;
     int last_idx;

@@ -177,7 +177,12 @@ modules import cleanly anywhere:
 |---|---|---|
 | `src/floor_input.py` | `rpi_gpio` | imports fine; `main()` fails at `import rpi_gpio` |
 | `src/motor_control.py` | `rpi_gpio` | imports fine; `main()` fails at `import rpi_gpio`, and refuses to start anyway until calibrated |
-| `vision/vision_service.c` via `make vision` | `<vcapture/capture.h>`, `-lcapture` | will not compile; use `make vision-stub` |
+| `vision/vision_service.c` via `make vision-sensor` | Sensor Framework headers, `-lsensor` | will not compile; use `make vision-stub` or the mock |
+| `vision/vision_service.c` via `make vision` | `<vcapture/capture.h>`, `-lcapture` | will not compile **anywhere, including the board** — package absent, see PIVOT.md |
+
+Note `vision_service.c` hardcodes `/tmp/elevator` and does **not** honor `ELEVATOR_FIFO_DIR`,
+unlike the Python processes. If you override that variable, the C binary will not find the
+other processes. The mock (`tools/mock_vision.py`) does honor it.
 
 ### Unverified API details — do not trust without checking the QNX docs
 
@@ -188,20 +193,20 @@ re-investigated; everything else remains open.
 Source for the resolved rpi_gpio items:
 <https://www.qnx.com/developers/docs/qnxeverywhere/com.qnx.doc.interfacing/topic/rpi/rpi_GPIO-apis.html>
 
-**`capture.h` usage in `vision/vision_service.c`.** None of the following is confirmed:
+**Camera capture — see [PIVOT.md](PIVOT.md) for current status.** Summary:
 
-- Exact spelling and existence of `capture_create_context`, `capture_set_property_i32`,
-  `capture_create_buffers`, `capture_get_frame`, `capture_get_buffer`,
-  `capture_release_frame`, `capture_destroy_context`.
-- The `CAPTURE_PROPERTY_*` constants, and whether the `SRC_` or `DST_` variants are correct
-  for a UVC source.
-- Buffer ownership: whether `capture_get_frame` returns a borrowed pointer that must be
-  released before the next call, and whether the returned index is into the buffer array we
-  supplied.
-- The timeout units on `capture_get_frame`, and the meaning of its return value.
-- **Pixel format.** `blob.c` assumes packed YUYV 4:2:2 (`Y0 U Y1 V`). If the webcam negotiates
-  MJPEG or NV12 instead, the unpacking in `sample_matches()` is wrong and must change. This is
-  the single most likely thing to be wrong on first run.
+- **`capture.h` is dead on this board.** The Video Capture framework package is not installed
+  (`find / -iname "capture.h"` and `find / -iname "libcapture*"` both empty). `make vision`
+  cannot build here. The code is kept behind `VISION_CAPTURE_H` in case the package is added.
+- **The Sensor Framework backend is unverified.** `make vision-sensor` targets the Camera
+  Module 3 (IMX708) that is actually on the board. Every call in it is a hypothesis modelled
+  on the external-camera example and has never been compiled against real headers. Expect the
+  names to be wrong.
+- **The demo runs on mock input** (`tools/mock_vision.py`), which needs no camera and no
+  vision build at all. `make test-mock` guards it.
+- **Pixel format** applies to whichever backend ends up working. `blob.c` assumes packed YUYV
+  4:2:2 (`Y0 U Y1 V`). If the sensor delivers RAW, MJPEG or NV12, the unpacking in
+  `sample_matches()` must change. This remains the single most likely thing to be wrong.
 
 The blob detection itself is tested and correct; only the camera glue is unverified. It is
 isolated behind `cap_open` / `cap_frame` / `cap_release` / `cap_close` so it can be corrected
